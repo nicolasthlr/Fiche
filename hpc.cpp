@@ -56,6 +56,14 @@ extern "C" {
 }
 
 
+// Example
+int n = 50; // Problem size
+int nrhs = 1; // Number of RHS vectors
+int info = 0;
+double* A = new double[n*n];
+int* ipiv = new int[n]; // Vector for pivots
+double* b = new double[n]; // RHS vector / output vector
+
 
 
 

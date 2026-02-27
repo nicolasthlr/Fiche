@@ -1,5 +1,7 @@
 g++ main.cpp -llapack -lblas
 
+// Générer un double entre 0 et 1
+double x = (double)rand() / RAND_MAX;
 
 #include <iostream>
 #include <cstdlib>

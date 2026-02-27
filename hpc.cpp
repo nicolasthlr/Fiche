@@ -1,7 +1,6 @@
-g++ main.cpp -llapack -lblas
-
-// Générer un double entre 0 et 1
-double x = (double)rand() / RAND_MAX;
+// ================================================================
+//         FICHE RÉVISION BLAS — Fonctions essentielles
+// ================================================================
 
 #include <iostream>
 #include <cstdlib>
@@ -9,29 +8,187 @@ double x = (double)rand() / RAND_MAX;
 #include "cblas.h"
 using namespace std;
 
-// Cblas (replace "d" by "z" if we deal with complex)
+// Compiler avec : g++ main.cpp -o main -llapack -lblas
+// Avec MPI     : mpicxx main.cpp -o main -llapack -lblas
 
-// y <-- ax+y
-cblas_daxpy(n,a,x,inc x,y,inc y);
+// Convention : remplacer "d" par "z" pour les complexes
+// d = double, s = float, z = complex double
 
-// y <-- x
-cblas_dcopy(n,x,inc x,y,inc y);
+// Génération aléatoire (rappel) :
+// srand(time(0) + rank);               // initialiser UNE SEULE FOIS (+ rank si MPI)
+// double x = (double)rand() / RAND_MAX; // double entre 0 et 1
+// double x = ((double)rand() / RAND_MAX) - 0.5; // double entre -0.5 et 0.5
 
-// x . y
-cblas_ddot(n,x,inc x, y, inc y);
 
-// Euclidian norm || x ||2
-cblas_dnrm2(n,x,inc x);
+// ================================================================
+// PARAMÈTRES COMMUNS
+// ================================================================
 
-// x <-- ax
-cblas_dscal(n,a,x,inc x);
+// n      = nombre d'éléments du vecteur (ou taille du problème)
+// inc    = incrément entre éléments (presque toujours 1)
+// a, b   = scalaires (double)
+// x, y   = double* vecteurs
+// A, B,C = double* matrices (stockées en 1D)
+// lda    = leading dimension de A
+//          → CblasRowMajor : lda = nb de COLONNES
+//          → CblasColMajor : lda = nb de LIGNES
 
-// y <-- aAx + by
-// Order = CblasRowMajor or CblasColMajor, TransA = CblasNoTrans or CblasTrans, lda = nb colonnes (en row major) 
-cblas_dgemv(Order,TransA,M,N,a,A,lda,x,inc x,b,y,inc y);
+// CblasRowMajor = stockage C++ naturel (ligne par ligne)  ← utiliser par défaut
+// CblasColMajor = stockage Fortran (colonne par colonne)  ← utilisé par LAPACK
+// CblasNoTrans  = pas de transposition
+// CblasTrans    = transposer la matrice
 
-// C <-- aAB+bC
-cblas_dgemm(Order,TransA,TransB,M,N,K,a,A,lda,B,ldb,b,C,ldc);
+
+// ================================================================
+// 1. OPÉRATIONS SUR VECTEURS
+// ================================================================
+
+// y <-- a*x + y   (axpy = "a times x plus y")
+// Utile pour : mise à jour d'un vecteur, gradient conjugué (x = x + alpha*p)
+cblas_daxpy(n, a, x, incx, y, incy);
+//   n    = nombre d'éléments
+//   a    = scalaire multiplicateur de x
+//   x    = vecteur source (non modifié)
+//   incx = incrément de x (= 1)
+//   y    = vecteur destination → MODIFIÉ (y = a*x + y)
+//   incy = incrément de y (= 1)
+//
+// Exemple : double a = 2.0;
+//           cblas_daxpy(N, a, x, 1, y, 1);  // y = 2*x + y
+
+
+// ----------------------------------------------------------------
+
+// y <-- x   (copie de vecteur)
+cblas_dcopy(n, x, incx, y, incy);
+//   x = vecteur source
+//   y = vecteur destination → MODIFIÉ (copie de x)
+//
+// Exemple : cblas_dcopy(N, x, 1, y, 1);  // y = x
+
+
+// ----------------------------------------------------------------
+
+// résultat = x · y   (produit scalaire)
+// Retourne un double directement
+double dot = cblas_ddot(n, x, incx, y, incy);
+//
+// Exemple : double dot = cblas_ddot(N, x, 1, y, 1);
+//
+// Avec MPI : chaque rank calcule son dot local, puis MPI_Reduce(MPI_SUM)
+
+
+// ----------------------------------------------------------------
+
+// résultat = ||x||₂   (norme euclidienne)
+// Retourne un double directement
+double nrm = cblas_dnrm2(n, x, incx);
+//
+// Exemple : double nrm = cblas_dnrm2(N, x, 1);
+//
+// ⚠️  Avec MPI : ne PAS réduire dnrm2 directement !
+//     → Calculer ||x_local||² = ddot(x,x), réduire avec MPI_SUM, puis sqrt()
+//     double loc_nrm_sq = cblas_ddot(loc_n, x, 1, x, 1);
+//     double nrm_sq;
+//     MPI_Reduce(&loc_nrm_sq, &nrm_sq, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+//     if (rank == 0) printf("norme = %f\n", sqrt(nrm_sq));
+
+
+// ----------------------------------------------------------------
+
+// x <-- a*x   (mise à l'échelle d'un vecteur)
+cblas_dscal(n, a, x, incx);
+//   x = vecteur → MODIFIÉ (x = a*x)
+//
+// Exemple : cblas_dscal(N, 2.0, x, 1);  // x = 2*x
+
+
+// ================================================================
+// 2. OPÉRATIONS MATRICE-VECTEUR
+// ================================================================
+
+// y <-- a*A*x + b*y   (gemv = "general matrix-vector multiply")
+cblas_dgemv(Order, TransA, M, N, a, A, lda, x, incx, b, y, incy);
+//   Order  = CblasRowMajor (stockage C++ ligne par ligne) ← toujours utiliser ça
+//   TransA = CblasNoTrans (pas de transposition) ou CblasTrans
+//   M      = nombre de LIGNES de A
+//   N      = nombre de COLONNES de A
+//   a      = scalaire devant A*x (souvent 1.0)
+//   A      = matrice M×N
+//   lda    = nb de colonnes de A (en RowMajor) = N
+//   x      = vecteur de taille N
+//   incx   = 1
+//   b      = scalaire devant y (0.0 si on veut juste y = A*x)
+//   y      = vecteur résultat de taille M → MODIFIÉ
+//   incy   = 1
+//
+// Exemple (y = A*x, sans terme b*y) :
+//   double* y = new double[M]();
+//   cblas_dgemv(CblasRowMajor, CblasNoTrans, M, N, 1.0, A, N, x, 1, 0.0, y, 1);
+//
+// ⚠️  b=0.0 → y = a*A*x   (le y initial est ignoré)
+//     b=1.0 → y = a*A*x + y  (accumulation)
+
+
+// ================================================================
+// 3. OPÉRATIONS MATRICE-MATRICE
+// ================================================================
+
+// C <-- a*A*B + b*C   (gemm = "general matrix-matrix multiply")
+cblas_dgemm(Order, TransA, TransB, M, N, K, a, A, lda, B, ldb, b, C, ldc);
+//   Order  = CblasRowMajor
+//   TransA = CblasNoTrans ou CblasTrans
+//   TransB = CblasNoTrans ou CblasTrans
+//   M      = nb de lignes de A (et de C)
+//   N      = nb de colonnes de B (et de C)
+//   K      = nb de colonnes de A = nb de lignes de B
+//   a      = scalaire devant A*B (souvent 1.0)
+//   A      = matrice M×K,  lda = K (en RowMajor)
+//   B      = matrice K×N,  ldb = N (en RowMajor)
+//   b      = scalaire devant C (0.0 si on veut juste C = A*B)
+//   C      = matrice M×N → MODIFIÉE,  ldc = N (en RowMajor)
+//
+// Exemple (C = A*B) :
+//   double* C = new double[M*N]();
+//   cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, M, N, K,
+//               1.0, A, K, B, N, 0.0, C, N);
+
+
+// ================================================================
+// 4. RÉSUMÉ — Quoi utiliser selon la situation
+// ================================================================
+
+//  Besoin                          Fonction         Retour
+//  ------                          --------         ------
+//  Dot product x·y                 cblas_ddot       double
+//  Norme ||x||₂                    cblas_dnrm2      double
+//  Mise à jour  y = ax + y         cblas_daxpy      void (modifie y)
+//  Copie        y = x              cblas_dcopy      void (modifie y)
+//  Scaling      x = ax             cblas_dscal      void (modifie x)
+//  Matvec       y = aAx + by       cblas_dgemv      void (modifie y)
+//  Matmat       C = aAB + bC       cblas_dgemm      void (modifie C)
+
+
+// ================================================================
+// 5. PATTERN TYPE EXAM — BLAS + MPI
+// ================================================================
+
+// Dot product distribué :
+//   double loc_dot = cblas_ddot(loc_n, x, 1, y, 1);
+//   double dot;
+//   MPI_Reduce(&loc_dot, &dot, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+
+// Norme distribuée :
+//   double loc_nrm_sq = cblas_ddot(loc_n, x, 1, x, 1);  // ||x_local||²
+//   double nrm_sq;
+//   MPI_Reduce(&loc_nrm_sq, &nrm_sq, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+//   if (rank == 0) printf("norme = %f\n", sqrt(nrm_sq));
+
+// Matvec distribué (chaque rank a ses lignes de A) :
+//   double* y_local = new double[loc_rows]();
+//   cblas_dgemv(CblasRowMajor, CblasNoTrans, loc_rows, N, 1.0, A_local, N, x, 1, 0.0, y_local, 1);
+//   MPI_Gather(y_local, loc_rows, MPI_DOUBLE, y_global, loc_rows, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
 
 
 // ================================================================

@@ -38,9 +38,10 @@ cblas_dgemm(Order,TransA,TransB,M,N,K,a,A,lda,B,ldb,b,C,ldc);
 //         FICHE RÉVISION LAPACK — Fonctions essentielles
 // ================================================================
 
-#include <cstdio>
+#include <iostream>
 #include <cstdlib>
 #include <cmath>
+using namespace std;
 
 // ================================================================
 // CONVENTION OBLIGATOIRE — Toujours mettre en haut du fichier
@@ -53,7 +54,8 @@ cblas_dgemm(Order,TransA,TransB,M,N,K,a,A,lda,B,ldb,b,C,ldc);
 // Toutes les routines LAPACK doivent être déclarées en extern "C"
 // pour éviter le name mangling du C++
 
-// Compiler avec : mpicxx main.cpp -o main -llapack -lblas
+// Compiler avec : g++ main.cpp -o main -llapack -lblas
+// Avec MPI     : mpicxx main.cpp -o main -llapack -lblas
 
 
 // ================================================================
@@ -62,18 +64,53 @@ cblas_dgemm(Order,TransA,TransB,M,N,K,a,A,lda,B,ldb,b,C,ldc);
 
 // 1. Tous les arguments sont passés PAR RÉFÉRENCE (const int& n, pas int n)
 // 2. Les matrices sont stockées en 1D, COLONNE PAR COLONNE (column-major)
-//    → A[i][j] en 2D = A[i + j*n] en 1D   (ordre Fortran)
+//    → A[i + j*N]   (i=ligne, j=colonne)
 // 3. Les matrices sont souvent ÉCRASÉES après l'appel
 //    → faire une copie si on en a besoin après
 // 4. Toujours vérifier info après l'appel :
 //    info = 0  → succès
-//    info < 0  → argument invalide (le -info ème argument)
+//    info < 0  → argument invalide
 //    info > 0  → échec numérique (ex: matrice singulière)
 
 // Nommage des routines :
-// d = double   (s = float, z = complex double)
-// ge = matrice générale   (sy = symétrique, tr = triangulaire)
-// sv = solve   (ev = eigenvalues, trf = factorisation)
+// d  = double   (s = float)
+// ge = matrice générale   (sy = symétrique)
+// sv = solve    (ev = eigenvalues, trf = factorisation LU)
+
+
+// ================================================================
+// DÉCLARATIONS DE VARIABLES — Style du cours
+// ================================================================
+
+//    const int N = 3;              // taille de la matrice
+//    double* A    = new double[N*N]();  // matrice N×N (le () initialise à 0)
+//    double* b    = new double[N]();    // vecteur second membre
+//    double* w    = new double[N]();    // valeurs propres
+//    int*    ipiv = new int[N]();       // tableau de pivots (TOUJOURS int*, jamais double*)
+//    int     info;                      // code de retour
+//    int     lwork;                     // taille du workspace
+
+
+// ================================================================
+// REMPLISSAGE D'UNE MATRICE — Column-major (colonne par colonne)
+// ================================================================
+
+//  Matrice 3×3 :   | 2  1  1 |
+//                  | 4  3  3 |
+//                  | 8  7  9 |
+//
+//    double* A = new double[3*3]();
+//    // Colonne 0
+//    A[0] = 2.0;  A[1] = 4.0;  A[2] = 8.0;
+//    // Colonne 1
+//    A[3] = 1.0;  A[4] = 3.0;  A[5] = 7.0;
+//    // Colonne 2
+//    A[6] = 1.0;  A[7] = 3.0;  A[8] = 9.0;
+//
+// Formule générale : A[i + j*N]  (ligne i, colonne j)
+//
+// ⚠️  Pour une matrice SYMÉTRIQUE : A[i + j*N] = A[j + i*N]
+//     → remplir les deux triangles identiquement
 
 
 // ================================================================
@@ -81,29 +118,37 @@ cblas_dgemm(Order,TransA,TransB,M,N,K,a,A,lda,B,ldb,b,C,ldc);
 // ================================================================
 
 extern "C" {
-    void F77NAME(dgesv)(const int& n,     // taille de la matrice A (n×n)
-                        const int& nrhs,  // nombre de seconds membres (colonnes de b)
-                        double* A,        // matrice n×n → ÉCRASÉE par la facto LU
-                        const int& lda,   // leading dimension = n
-                        int* ipiv,        // tableau de n entiers (pivot) → allouer n ints
+    void F77NAME(dgesv)(const int& n,     // taille de la matrice A (N×N)
+                        const int& nrhs,  // nombre de seconds membres (= 1 en général)
+                        double* A,        // matrice N×N → ÉCRASÉE par la facto LU
+                        const int& lda,   // leading dimension = N
+                        int* ipiv,        // int* ipiv = new int[N]()  ← TOUJOURS int*
                         double* b,        // second membre → ÉCRASÉ par la solution x
-                        const int& ldb,   // leading dimension de b = n
+                        const int& ldb,   // leading dimension de b = N
                         int& info);       // 0=succès, <0=arg invalide, >0=singulier
 }
 
-// EXEMPLE D'UTILISATION :
+// EXEMPLE COMPLET :
 //
-//    const int n = 4;
-//    const int nrhs = 1;    // un seul second membre
-//    double A[n*n] = { ... };
-//    double b[n]   = { ... };
-//    int ipiv[n];
-//    int info;
+//    const int N    = 3;
+//    const int nrhs = 1;
+//    double* A    = new double[N*N]();
+//    double* b    = new double[N]();
+//    int*    ipiv = new int[N]();       // ← int*, pas double* !
+//    int     info;
 //
-//    F77NAME(dgesv)(n, nrhs, A, n, ipiv, b, n, info);
+//    // Remplir A (column-major) et b ...
+//    b[0] = 4.0; b[1] = 10.0; b[2] = 26.0;
+//    A[0] = 2.0; A[1] = 4.0; A[2] = 8.0;   // colonne 0
+//    A[3] = 1.0; A[4] = 3.0; A[5] = 7.0;   // colonne 1
+//    A[6] = 1.0; A[7] = 3.0; A[8] = 9.0;   // colonne 2
+//
+//    F77NAME(dgesv)(N, nrhs, A, N, ipiv, b, N, info);
 //
 //    if (info != 0) printf("Erreur dgesv : info = %d\n", info);
-//    // b contient maintenant la solution x
+//    // b[0], b[1], b[2] contiennent maintenant la solution x
+//
+//    delete[] A; delete[] b; delete[] ipiv;
 
 
 // ================================================================
@@ -113,40 +158,50 @@ extern "C" {
 extern "C" {
     void F77NAME(dsyev)(const char& jobz,  // 'N' = valeurs propres seulement
                                            // 'V' = valeurs propres + vecteurs propres
-                        const char& uplo,  // 'U' = triangle supérieur stocké
-                                           // 'L' = triangle inférieur stocké
+                        const char& uplo,  // 'U' = triangle supérieur
+                                           // 'L' = triangle inférieur
                         const int& n,      // taille de la matrice
-                        double* a,         // matrice n×n → ÉCRASÉE par les vecteurs propres si jobz='V'
-                        const int& lda,    // leading dimension = n
-                        double* w,         // tableau de n doubles → valeurs propres en sortie (ordre croissant)
+                        double* a,         // matrice N×N → ÉCRASÉE après l'appel
+                        const int& lda,    // leading dimension = N
+                        double* w,         // double* w = new double[N]() → valeurs propres (ordre croissant)
                         double* work,      // workspace temporaire
-                        const int& lwork,  // taille du workspace (-1 pour query)
-                        int* info);        // 0=succès, >0=non convergence
+                        const int& lwork,  // -1 pour query, puis taille optimale
+                        int* info);        // int info (pas int& ici !)
 }
 
 // ⚠️  TOUJOURS APPELER EN DEUX FOIS :
 
-// ÉTAPE 1 : demander la taille optimale du workspace (lwork = -1)
-//    char jobz = 'N', uplo = 'U';
+// EXEMPLE COMPLET :
+//
+//    const int N  = 4;
+//    char jobz    = 'N';    // valeurs propres seulement
+//    char uplo    = 'U';    // triangle supérieur
+//    double* A    = new double[N*N]();
+//    double* w    = new double[N]();    // contiendra les valeurs propres
+//    int     info;
+//
+//    // Remplir A (column-major, symétrique) ...
+//
+//    // ÉTAPE 1 : query → demander la taille optimale du workspace
 //    int lwork = -1;
 //    double work_query;
-//    int info;
-//    double w[n];
+//    F77NAME(dsyev)(jobz, uplo, N, A, N, w, &work_query, lwork, &info);
 //
-//    F77NAME(dsyev)(jobz, uplo, n, A, n, w, &work_query, lwork, &info);
-//
-// ÉTAPE 2 : allouer le workspace et faire le vrai calcul
+//    // ÉTAPE 2 : allouer le workspace avec la taille optimale
 //    lwork = (int)work_query;
-//    double* work = new double[lwork];
+//    double* work = new double[lwork]();
 //
-//    F77NAME(dsyev)(jobz, uplo, n, A, n, w, work, lwork, &info);
+//    // ÉTAPE 3 : vrai calcul des valeurs propres
+//    F77NAME(dsyev)(jobz, uplo, N, A, N, w, work, lwork, &info);
 //
-//    // w[0], w[1], ..., w[n-1] contiennent les valeurs propres (ordre croissant)
-//    delete[] work;
+//    if (info != 0) printf("Erreur dsyev : info = %d\n", info);
+//    // w[0] <= w[1] <= ... <= w[N-1]  (ordre croissant automatique)
+//
+//    delete[] A; delete[] w; delete[] work;
 
 // CALCULER LE DÉTERMINANT depuis les valeurs propres :
 //    double det = 1.0;
-//    for (int k = 0; k < n; k++) det *= w[k];
+//    for (int k = 0; k < N; k++) det *= w[k];
 //    // det(A) = produit de toutes les valeurs propres
 
 
@@ -157,96 +212,90 @@ extern "C" {
 extern "C" {
     void F77NAME(dgetrf)(const int& m,   // nombre de lignes de A
                          const int& n,   // nombre de colonnes de A
-                         double* a,      // matrice → ÉCRASÉE par la factorisation L et U
+                         double* a,      // matrice → ÉCRASÉE par L et U
                          const int& lda, // leading dimension = m
-                         int* ipiv,      // tableau de min(m,n) entiers (pivots)
+                         int* ipiv,      // int* ipiv = new int[N]()
                          int& info);     // 0=succès, >0=matrice singulière
 }
 
-// EXEMPLE D'UTILISATION :
+// EXEMPLE COMPLET :
 //
-//    int ipiv[n];
-//    int info;
-//    F77NAME(dgetrf)(n, n, A, n, ipiv, info);
+//    const int N  = 3;
+//    double* A    = new double[N*N]();
+//    int*    ipiv = new int[N]();
+//    int     info;
+//
+//    // Remplir A ...
+//
+//    F77NAME(dgetrf)(N, N, A, N, ipiv, info);
 //
 //    if (info != 0) printf("Erreur dgetrf : info = %d\n", info);
-//    // A contient maintenant L et U (combinées)
+//    // A contient maintenant L et U combinées
+//
+//    delete[] A; delete[] ipiv;
 
-// ⚠️  dgetrf_ seul ne résout rien — il factorise seulement.
-//     Pour résoudre ensuite, utiliser dgesv_ directement
-//     (qui fait la factorisation LU + résolution en un seul appel).
+// ⚠️  dgetrf_ factorise seulement — pour résoudre directement utiliser dgesv_
 
 
 // ================================================================
-// 4. RÉSUMÉ DES PARAMÈTRES COURANTS
+// 4. ERREURS FRÉQUENTES À ÉVITER
 // ================================================================
 
-//  Paramètre   Valeur courante     Signification
-//  ---------   ---------------     -------------
-//  n           taille du problème  nombre de lignes/colonnes
-//  lda         n                   leading dimension (= n pour matrices carrées)
-//  ldb         n                   leading dimension du second membre
-//  nrhs        1                   un seul vecteur b (second membre)
-//  jobz        'N'                 valeurs propres seulement (pas les vecteurs)
-//  uplo        'U'                 triangle supérieur (pour matrices symétriques)
-//  lwork       -1 puis optimal     taille du workspace (query puis allocation)
-//  info        0                   succès (toujours vérifier !)
-//  ipiv        int[n]              tableau de pivots (toujours allouer !)
+// ❌  int* ipiv = new double[N]();   → ipiv doit être int*, pas double* !
+// ✅  int* ipiv = new int[N]();
 
+// ❌  F77NAME(dsyev)(..., lwork, ...);    → appel unique sans query
+// ✅  Toujours deux appels : d'abord lwork=-1, puis lwork=taille_optimale
 
-// ================================================================
-// 5. STOCKAGE COLUMN-MAJOR (ORDRE FORTRAN) — IMPORTANT
-// ================================================================
+// ❌  A[i*N + j]   → ordre C++ (row-major)
+// ✅  A[i + j*N]   → ordre LAPACK (column-major)
 
-// LAPACK stocke les matrices COLONNE PAR COLONNE :
-//
-//  Matrice 3×3 :   | 1 2 3 |
-//                  | 4 5 6 |
-//                  | 3 8 9 |
-//
-//  En mémoire :    [1, 4, 3, 2, 5, 8, 3, 6, 9]
-//                   col0      col1      col2
-//
-//  Formule :  A[i][j]  →  A[i + j*n]   (i=ligne, j=colonne)
-//
-// ⚠️  En C++, les tableaux 2D sont stockés LIGNE PAR LIGNE (row-major)
-//     → A[i][j] en C++ = A[i*n + j]
-//     → Il faut donc TRANSPOSER si on remplit la matrice en C++ style
-//     → OU remplir directement en column-major : A[i + j*n]
-
-// Pour une matrice SYMÉTRIQUE : peu importe car A = A^T
-// → on peut remplir en row-major et passer uplo='U', ça revient au même
+// ❌  delete[] A avant d'utiliser les résultats
+// ✅  delete[] à la fin seulement
 
 
 // ================================================================
-// 6. UTILISATION AVEC MPI — PATTERN TYPE DE L'EXAMEN
+// 5. PATTERN TYPE EXAM — LAPACK + MPI
 // ================================================================
 
-// Chaque rank calcule quelque chose localement avec LAPACK,
-// puis MPI combine les résultats.
+// Chaque rank travaille sur son bloc localement avec LAPACK,
+// puis MPI combine les résultats sur rank 0.
 
-// PATTERN EXAM (comme le test det(A)) :
+//    const int N = 8;
 //
-//    // 1. Chaque rank remplit et traite son bloc localement
-//    double A_local[n*n];
-//    // ... remplir A_local ...
+//    // 1. Remplir le bloc local
+//    double* A = new double[N*N]();
+//    srand(time(0) + rank);    // graine différente par rank !
+//    for (int i = 0; i < N; i++) {
+//        for (int j = i; j < N; j++) {
+//            double val = ((double)rand() / RAND_MAX) - 0.5;
+//            A[i + j*N] = val;
+//            A[j + i*N] = val;   // symétrie
+//        }
+//    }
 //
-//    // 2. LAPACK calcule les valeurs propres localement
-//    double w[n];
-//    // ... dsyev_ ...
+//    // 2. Valeurs propres avec dsyev_
+//    char jobz = 'N', uplo = 'U';
+//    double* w = new double[N]();
+//    int info, lwork = -1;
+//    double work_query;
+//    F77NAME(dsyev)(jobz, uplo, N, A, N, w, &work_query, lwork, &info);
+//    lwork = (int)work_query;
+//    double* work = new double[lwork]();
+//    F77NAME(dsyev)(jobz, uplo, N, A, N, w, work, lwork, &info);
 //
-//    // 3. Calcul local du déterminant
+//    // 3. Déterminant local
 //    double loc_det = 1.0;
-//    for (int k = 0; k < n; k++) loc_det *= w[k];
+//    for (int k = 0; k < N; k++) loc_det *= w[k];
 //
-//    // 4. MPI combine les résultats
+//    // 4. MPI_Reduce → produit des déterminants locaux sur rank 0
 //    double det_global;
 //    MPI_Reduce(&loc_det, &det_global, 1, MPI_DOUBLE, MPI_PROD, 0, MPI_COMM_WORLD);
-//    //                                                ^^^^^^^^
-//    //                                    MPI_PROD pour un produit (det = produit des det locaux)
-//    //                                    MPI_SUM  pour une somme  (dot product, intégrale...)
-//
+//    //                                                ^^^^^^^^ produit (pas somme !)
 //    if (rank == 0) printf("det(A) = %e\n", det_global);
+//
+//    delete[] A; delete[] w; delete[] work;
+
 
 
 // ================================================================

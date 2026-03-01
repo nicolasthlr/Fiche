@@ -771,6 +771,79 @@ int main(int argc, char* argv[]) {
 //  MPI_PROD  → produit
 
 
+// A*B en faisant ligne par ligne
+#include <iostream>
+#include <mpi.h>
+#include <cmath>
+#include <cstdlib>
+#include <Accelerate/Accelerate.h>
+using namespace std;
+
+int main(int argc, char* argv[]) {
+    MPI_Init(&argc, &argv);
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    const int n = 1024;
+    int base_n = n / size;
+    int rem    = n % size;
+    int loc_n  = base_n + (rank == size-1 ? rem : 0);
+
+    double* A_loc = new double[loc_n * n];
+    double* B     = new double[n * n];
+    double* C_loc = new double[loc_n * n]();
+
+    srand(rank + 42);
+    for (int i = 0; i < loc_n; i++)
+        for (int j = 0; j < n; j++)
+            A_loc[i*n+j] = (double)rand() / RAND_MAX;
+
+    srand(0);
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < n; j++)
+            B[i*n+j] = (double)rand() / RAND_MAX;
+
+    // Temps
+    double t_start = MPI_Wtime();
+    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                loc_n, n, n,
+                1.0, A_loc, n, B, n, 0.0, C_loc, n);
+    double t_end = MPI_Wtime();
+
+    // Norme
+    double local_norm_sq = cblas_ddot(loc_n * n, C_loc, 1, C_loc, 1);
+    double global_norm_sq = 0.0;
+    MPI_Reduce(&local_norm_sq, &global_norm_sq, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+
+    // Gatherv pour gérer le remainder
+    int* recvcounts = new int[size];
+    int* displs     = new int[size];
+    for (int i = 0; i < size; i++) {
+        recvcounts[i] = (i == size-1 ? base_n + rem : base_n) * n;
+        displs[i]     = i * base_n * n;
+    }
+
+    double* C = (rank == 0) ? new double[n*n]() : nullptr;
+    MPI_Gatherv(C_loc, loc_n*n, MPI_DOUBLE,
+                C, recvcounts, displs, MPI_DOUBLE,
+                0, MPI_COMM_WORLD);
+
+    if (rank == 0) {
+        cout << "Frobenius norm: " << sqrt(global_norm_sq) << endl;
+        cout << "Time (dgemm): "   << t_end - t_start << " s" << endl;
+        delete[] C;
+    }
+
+    delete[] A_loc;
+    delete[] B;
+    delete[] C_loc;
+    delete[] recvcounts;
+    delete[] displs;
+
+    MPI_Finalize();
+    return 0;
+}
 
 
 

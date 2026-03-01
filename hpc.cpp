@@ -853,21 +853,35 @@ int main(int argc, char* argv[]) {
 #include <cstdlib>
 using namespace std;
 
-// BLAS
-extern "C" {
-    void dcopy_(int* n, double* x, int* incx, double* y, int* incy);
-    void dgemm_(char* transa, char* transb, int* m, int* n, int* k,
-                double* alpha, double* A, int* lda, double* B, int* ldb,
-                double* beta, double* C, int* ldc);
-    void dgemv_(char* trans, int* m, int* n, double* alpha, double* A, int* lda,
-                double* x, int* incx, double* beta, double* y, int* incy);
-    double dnrm2_(int* n, double* x, int* incx);
-}
+#define F77NAME(x) x##_
 
-// LAPACK
 extern "C" {
-    void dgesv_(int* n, int* nrhs, double* A, int* lda, int* ipiv,
-                double* b, int* ldb, int* info);
+    // ── BLAS niveau 1 ─────────────────────────────────────────────────────
+    double F77NAME(ddot)  (int* n, double* x, int* incx, double* y, int* incy);
+    double F77NAME(dnrm2) (int* n, double* x, int* incx);
+    void   F77NAME(dcopy) (int* n, double* x, int* incx, double* y, int* incy);
+    void   F77NAME(dscal) (int* n, double* alpha, double* x, int* incx);
+    void   F77NAME(daxpy) (int* n, double* alpha, double* x, int* incx,
+                                                  double* y, int* incy);
+    // ── BLAS niveau 2 ─────────────────────────────────────────────────────
+    void F77NAME(dgemv)(char* trans, int* m, int* n,
+                        double* alpha, double* A, int* lda,
+                        double* x, int* incx,
+                        double* beta,  double* y, int* incy);
+    // ── BLAS niveau 3 ─────────────────────────────────────────────────────
+    void F77NAME(dgemm)(char* transa, char* transb, int* m, int* n, int* k,
+                        double* alpha, double* A, int* lda,
+                                       double* B, int* ldb,
+                        double* beta,  double* C, int* ldc);
+    // ── LAPACK — systèmes linéaires ───────────────────────────────────────
+    void F77NAME(dgesv) (int* n, int* nrhs, double* A, int* lda, int* ipiv,
+                         double* b, int* ldb, int* info);
+    void F77NAME(dpotrf)(char* uplo, int* n, double* A, int* lda, int* info);
+    void F77NAME(dpotrs)(char* uplo, int* n, int* nrhs, double* A, int* lda,
+                         double* b, int* ldb, int* info);
+    // ── LAPACK — valeurs propres ──────────────────────────────────────────
+    void F77NAME(dsyev)(char* jobz, char* uplo, int* n, double* A, int* lda,
+                        double* w, double* work, int* lwork, int* info);
 }
 
 int main(int argc, char* argv[]) {
@@ -886,26 +900,25 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < n*n; i++)
         M_local[i] = ((double)rand() / RAND_MAX) - 0.5;
 
-    // A = M * M^T
-    int N = n;
-    int INC = 1;
+    int N     = n;
+    int NN    = n*n;
+    int INC   = 1;
     double alpha = 1.0, beta = 0.0;
     char N_char = 'N', T_char = 'T';
 
-    dgemm_(&N_char, &T_char, &N, &N, &N,
-           &alpha, M_local, &N,
-                   M_local, &N,
-           &beta,  A_local, &N);
+    // A = M * M^T
+    F77NAME(dgemm)(&N_char, &T_char, &N, &N, &N,
+                   &alpha, M_local, &N,
+                           M_local, &N,
+                   &beta,  A_local, &N);
 
     // A += n*I
     for (int i = 0; i < n; i++)
         A_local[i*n + i] += n;
 
-    // Sauvegarder A avant dgesv (qui écrase avec LU)
+    // Sauvegarder A avant que dgesv l'écrase
     double* A_orig = new double[n*n];
-    dcopy_(&N, A_local, &INC, A_orig, &INC);  // copie n*n éléments
-    int NN = n*n;
-    dcopy_(&NN, A_local, &INC, A_orig, &INC);
+    F77NAME(dcopy)(&NN, A_local, &INC, A_orig, &INC);
 
     // ── ÉTAPE 2 : Construire b ────────────────────────────────────────────
     double* b_local = new double[n];
@@ -913,14 +926,14 @@ int main(int argc, char* argv[]) {
         b_local[i] = (double)rand() / RAND_MAX;
 
     double* b_orig = new double[n];
-    dcopy_(&N, b_local, &INC, b_orig, &INC);
+    F77NAME(dcopy)(&N, b_local, &INC, b_orig, &INC);
 
     // ── ÉTAPE 3 : Résoudre A*x = b avec dgesv ────────────────────────────
     int NRHS = 1;
     int INFO = 0;
     int* ipiv = new int[n]();
 
-    dgesv_(&N, &NRHS, A_local, &N, ipiv, b_local, &N, &INFO);
+    F77NAME(dgesv)(&N, &NRHS, A_local, &N, ipiv, b_local, &N, &INFO);
 
     if (INFO != 0) {
         cerr << "Rank " << rank << ": dgesv failed INFO=" << INFO << endl;
@@ -930,15 +943,15 @@ int main(int argc, char* argv[]) {
 
     // ── ÉTAPE 4 : Résidu r = b_orig - A_orig * x ─────────────────────────
     double* resid = new double[n];
-    dcopy_(&N, b_orig, &INC, resid, &INC);   // resid = b_orig
+    F77NAME(dcopy)(&N, b_orig, &INC, resid, &INC);   // resid = b_orig
 
     double alpha2 = -1.0, beta2 = 1.0;
-    dgemv_(&N_char, &N, &N,
-           &alpha2, A_orig,  &N,
-                    b_local, &INC,
-           &beta2,  resid,   &INC);   // resid = b - A*x
+    F77NAME(dgemv)(&N_char, &N, &N,
+                   &alpha2, A_orig,  &N,
+                            b_local, &INC,
+                   &beta2,  resid,   &INC);   // resid = b - A*x
 
-    double nrm     = dnrm2_(&N, resid, &INC);
+    double nrm     = F77NAME(dnrm2)(&N, resid, &INC);
     double local_r = nrm * nrm;
 
     // ── ÉTAPE 5 : Réduction et affichage ─────────────────────────────────
@@ -961,6 +974,3 @@ int main(int argc, char* argv[]) {
     MPI_Finalize();
     return 0;
 }
-
-
-

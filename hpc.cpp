@@ -846,4 +846,121 @@ int main(int argc, char* argv[]) {
 }
 
 
+// solve Ai xi = bi 
+#include <iostream>
+#include <mpi.h>
+#include <cmath>
+#include <cstdlib>
+using namespace std;
+
+// BLAS
+extern "C" {
+    void dcopy_(int* n, double* x, int* incx, double* y, int* incy);
+    void dgemm_(char* transa, char* transb, int* m, int* n, int* k,
+                double* alpha, double* A, int* lda, double* B, int* ldb,
+                double* beta, double* C, int* ldc);
+    void dgemv_(char* trans, int* m, int* n, double* alpha, double* A, int* lda,
+                double* x, int* incx, double* beta, double* y, int* incy);
+    double dnrm2_(int* n, double* x, int* incx);
+}
+
+// LAPACK
+extern "C" {
+    void dgesv_(int* n, int* nrhs, double* A, int* lda, int* ipiv,
+                double* b, int* ldb, int* info);
+}
+
+int main(int argc, char* argv[]) {
+    MPI_Init(&argc, &argv);
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    const int n = 8;
+    srand(rank + 1);
+
+    // ── ÉTAPE 1 : Construire A = M*M^T + n*I ─────────────────────────────
+    double* M_local = new double[n*n];
+    double* A_local = new double[n*n]();
+
+    for (int i = 0; i < n*n; i++)
+        M_local[i] = ((double)rand() / RAND_MAX) - 0.5;
+
+    // A = M * M^T
+    int N = n;
+    int INC = 1;
+    double alpha = 1.0, beta = 0.0;
+    char N_char = 'N', T_char = 'T';
+
+    dgemm_(&N_char, &T_char, &N, &N, &N,
+           &alpha, M_local, &N,
+                   M_local, &N,
+           &beta,  A_local, &N);
+
+    // A += n*I
+    for (int i = 0; i < n; i++)
+        A_local[i*n + i] += n;
+
+    // Sauvegarder A avant dgesv (qui écrase avec LU)
+    double* A_orig = new double[n*n];
+    dcopy_(&N, A_local, &INC, A_orig, &INC);  // copie n*n éléments
+    int NN = n*n;
+    dcopy_(&NN, A_local, &INC, A_orig, &INC);
+
+    // ── ÉTAPE 2 : Construire b ────────────────────────────────────────────
+    double* b_local = new double[n];
+    for (int i = 0; i < n; i++)
+        b_local[i] = (double)rand() / RAND_MAX;
+
+    double* b_orig = new double[n];
+    dcopy_(&N, b_local, &INC, b_orig, &INC);
+
+    // ── ÉTAPE 3 : Résoudre A*x = b avec dgesv ────────────────────────────
+    int NRHS = 1;
+    int INFO = 0;
+    int* ipiv = new int[n]();
+
+    dgesv_(&N, &NRHS, A_local, &N, ipiv, b_local, &N, &INFO);
+
+    if (INFO != 0) {
+        cerr << "Rank " << rank << ": dgesv failed INFO=" << INFO << endl;
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+    // b_local contient maintenant x
+
+    // ── ÉTAPE 4 : Résidu r = b_orig - A_orig * x ─────────────────────────
+    double* resid = new double[n];
+    dcopy_(&N, b_orig, &INC, resid, &INC);   // resid = b_orig
+
+    double alpha2 = -1.0, beta2 = 1.0;
+    dgemv_(&N_char, &N, &N,
+           &alpha2, A_orig,  &N,
+                    b_local, &INC,
+           &beta2,  resid,   &INC);   // resid = b - A*x
+
+    double nrm     = dnrm2_(&N, resid, &INC);
+    double local_r = nrm * nrm;
+
+    // ── ÉTAPE 5 : Réduction et affichage ─────────────────────────────────
+    double global_R = 0.0;
+    MPI_Reduce(&local_r, &global_R, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+
+    if (rank == 0) {
+        cout << "R       = " << global_R       << endl;
+        cout << "sqrt(R) = " << sqrt(global_R) << endl;
+    }
+
+    delete[] M_local;
+    delete[] A_local;
+    delete[] A_orig;
+    delete[] b_local;
+    delete[] b_orig;
+    delete[] resid;
+    delete[] ipiv;
+
+    MPI_Finalize();
+    return 0;
+}
+
+
 

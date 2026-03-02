@@ -974,3 +974,77 @@ int main(int argc, char* argv[]) {
     MPI_Finalize();
     return 0;
 }
+
+
+
+#include <iostream>
+#include <stdexcept>
+#include <algorithm>
+using namespace std;
+#define F77NAME(x) x##_
+
+extern "C" {
+    // Factorisation LU de A : A → P*L*U, ipiv contient les permutations
+    void F77NAME(dgetrf)(const int& m,
+                         const int& n,
+                         double* A,
+                         const int& lda,
+                         int* ipiv,
+                         int& info);
+
+    // Inversion de A à partir de sa factorisation LU
+    void F77NAME(dgetri)(const int& n,
+                         double* A,
+                         const int& lda,
+                         int* ipiv,
+                         double* work,
+                         const int& lwork,
+                         int& info);
+}
+
+// Retourne une nouvelle matrice A^-1, sans modifier A
+// La matrice est stockée en colonne-major (format Fortran) : A[i][j] = A[j*n + i]
+// L'appelant est responsable du delete[] du pointeur retourné
+double* inverse(const double* A, int n) {
+    // Copie de A car dgetrf/dgetri travaillent in-place
+    double* Ainv = new double[n * n];
+    copy(A, A + n * n, Ainv);
+
+    int* ipiv = new int[n];
+    int info;
+
+    // Étape 1 : factorisation LU
+    F77NAME(dgetrf)(n, n, Ainv, n, ipiv, info);
+    if (info != 0) throw runtime_error("dgetrf failed");
+
+    // Étape 2 : calcul de la taille optimale du workspace (appel avec lwork=-1)
+    int lwork = -1;
+    double wkopt;
+    F77NAME(dgetri)(n, Ainv, n, ipiv, &wkopt, lwork, info);
+    lwork = (int)wkopt;
+
+    double* work = new double[lwork];
+
+    // Étape 3 : inversion effective
+    F77NAME(dgetri)(n, Ainv, n, ipiv, work, lwork, info);
+    if (info != 0) throw runtime_error("dgetri failed");
+
+    delete[] ipiv;
+    delete[] work;
+
+    return Ainv;
+}
+
+
+// Utilisation 
+    double* Ainv = inverse(A, n);
+
+    // Affichage de A^-1 en column-major
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++)
+            cout << Ainv[j * n + i] << "\t";
+        cout << "\n";
+    }
+
+    delete[] Ainv;  // ne pas oublier !
+    return 0;

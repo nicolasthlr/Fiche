@@ -1078,3 +1078,12 @@ for (int j = 0; j < n; j++)
         // Coin particulier
         if (i == 0 && j == n - 1)  A[j * n + i] = 99.0;
     }
+
+// Avant le main 
+void printMatrix(const double* A, int n) {
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++)
+            cout << A[j * n + i] << "\t";
+        cout << "\n";
+    }
+}

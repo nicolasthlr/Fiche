@@ -1087,3 +1087,54 @@ void printMatrix(const double* A, int n) {
         cout << "\n";
     }
 }
+
+
+
+#include <mpi.h>
+#include <iostream>
+using namespace std;
+
+int main(int argc, char* argv[]) {
+    MPI_Init(&argc, &argv);
+
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    double val    = 0.0;
+    double local  = (double)(rank + 1);
+    double total  = 0.0;
+    double* sendbuf = nullptr;
+    double* recvbuf = new double[size];
+
+    if (rank == 0) {
+        val = 42.0;
+        sendbuf = new double[size];
+        for (int i = 0; i < size; i++) sendbuf[i] = (i + 1) * 10.0;
+    }
+
+    // Bcast : le root envoie la même valeur à tout le monde
+    MPI_Bcast(&val, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+    // Scatter : le root découpe un tableau et envoie un morceau à chaque processus
+    double recv;
+    MPI_Scatter(sendbuf, 1, MPI_DOUBLE, &recv, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+    // Gather : chaque processus envoie sa valeur au root qui reconstruit le tableau
+    MPI_Gather(&recv, 1, MPI_DOUBLE, recvbuf, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+    // Allgather : comme Gather mais tout le monde reçoit le tableau complet
+    MPI_Allgather(&recv, 1, MPI_DOUBLE, recvbuf, 1, MPI_DOUBLE, MPI_COMM_WORLD);
+
+    // Reduce : chaque processus envoie, le root reçoit le résultat de l'opération
+    MPI_Reduce(&local, &total, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+
+    // Allreduce : comme Reduce mais tout le monde reçoit le résultat
+    MPI_Allreduce(&local, &total, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+
+    delete[] recvbuf;
+    if (rank == 0) delete[] sendbuf;
+
+    MPI_Finalize();
+    return 0;
+}

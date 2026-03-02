@@ -1048,3 +1048,33 @@ double* inverse(const double* A, int n) {
 
     delete[] Ainv;  // ne pas oublier !
     return 0;
+
+
+// Remplir matrice en column-major
+double* A = new double[n * n]();  // init à 0
+
+for (int j = 0; j < n; j++)
+    for (int i = 0; i < n; i++) {
+
+        // Diagonales : i - j = constante
+        if (i == j)      A[j * n + i] = 3.0;   // diag principale  (offset 0)
+        if (i == j + 1)  A[j * n + i] = -1.0;  // diag inférieure  (offset -1)
+        if (i == j - 1)  A[j * n + i] = 2.0;   // diag supérieure  (offset +1)
+        if (i == j + 2)  A[j * n + i] = 5.0;   // 2ème diag inf    (offset -2)
+        if (i == j - 2)  A[j * n + i] = 5.0;   // 2ème diag sup    (offset +2)
+
+        // Première ligne : i == 0
+        if (i == 0)      A[j * n + i] = 9.0;
+
+        // Dernière ligne : i == n-1
+        if (i == n - 1)  A[j * n + i] = 7.0;
+
+        // Première colonne : j == 0
+        if (j == 0)      A[j * n + i] = 4.0;
+
+        // Dernière colonne : j == n-1
+        if (j == n - 1)  A[j * n + i] = 6.0;
+
+        // Coin particulier
+        if (i == 0 && j == n - 1)  A[j * n + i] = 99.0;
+    }
